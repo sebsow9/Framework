@@ -1,0 +1,33 @@
+services:
+  receiver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: receiver
+    environment:
+      - ROLE=receiver
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./results:/results
+    networks:
+      - stream_net
+
+  sender:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sender
+    environment:
+      - ROLE=sender
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./framework/media:/media:ro
+      - ./results:/results
+    networks:
+      - stream_net
+    depends_on:
+      - receiver   # ensures receiver container starts first
+
+networks:
+  stream_net:
+    driver: bridge

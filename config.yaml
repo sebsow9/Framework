@@ -1,0 +1,25 @@
+role: sender  # default; overridden by ROLE env var in Docker
+
+network:
+  receiver_host: receiver  # Docker service name; change to IP for remote deployment
+  port: 1234
+  receiver_timeout_ms: 10000  # ms of silence before receiver closes — must exceed sender startup time
+
+video:
+  source: /media/input.mp4      # mounted into sender container
+  output: /results/received.mp4 # written by receiver container
+  codec: libx264
+  bitrate: 2M
+  fps: 30
+
+sender:
+  startup_delay: 3  # seconds to wait before streaming, giving receiver time to bind
+
+logging:
+  level: INFO
+
+# Plugin (optional) — comment out the entire block to use plain UDP
+plugin:
+  name: aes_ctr   # module name inside framework/plugins/ (without .py)
+                   # built-in: aes_ctr
+                   # custom:   drop your module in framework/plugins/ and set name
