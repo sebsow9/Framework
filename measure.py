@@ -6,7 +6,7 @@ import yaml
 from framework.sender.sender import Sender
 from framework.receiver.receiver import Receiver
 
-
+# TO DO - add actual comparison between input and output
 def setup_logging(level: str) -> None:
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
