@@ -22,14 +22,14 @@ The AES session key is never sent in plaintext.
     |<------- TCP connect -----------  |
     |--- len(4B) + public key (PEM) -->|
     |<-- len(4B) + OAEP ciphertext ----|  wraps AES key + CTR nonce
-    |--- b"ACK" --------------------> |
+    |--- b"ACK" -------------------->  |
     |                                  |
     | private_key.decrypt() → key,nonce| sender already has key, nonce
     |                                  |
     | bind data socket (port)          | sleep post_handshake_delay (1 s)
     | start FFmpeg  stdin=PIPE         | start FFmpeg  stdout=PIPE
     |<====== encrypted MPEG-TS ========| sender_transport() → AES-CTR
-    | receiver_transport() → AES-CTR  |
+    | receiver_transport() → AES-CTR   |
     | writes to FFmpeg stdin           |
 
 Wire framing

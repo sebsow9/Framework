@@ -12,6 +12,9 @@ video:
   bitrate: 2M
   fps: 30
 
+#audio:
+
+
 sender:
   startup_delay: 3  # seconds to wait before streaming, giving receiver time to bind
 
