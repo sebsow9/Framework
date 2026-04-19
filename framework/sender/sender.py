@@ -32,6 +32,7 @@ class Sender:
             "-r", str(fps),
             "-c:a", "aac",     # MPEG-TS requires AAC audio
             "-f", "mpegts",
+            "-vsync", "0",         # don't duplicate or drop frames to match timestamps, important to score the quality of the video stream as accurately as possible
         ]
 
         if self.plugin:
