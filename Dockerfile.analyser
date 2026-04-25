@@ -1,0 +1,23 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip xz-utils ca-certificates curl \
+    && curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
+        | tar -xJ --strip-components=2 -C /usr/local/bin --wildcards '*/bin/ffmpeg' '*/bin/ffprobe' \
+    && rm -rf /var/lib/apt/lists/*
+
+# Fail the build visibly if this FFmpeg binary lacks libvmaf
+RUN ffmpeg -hide_banner -filters 2>&1 | awk '$2=="libvmaf"{found=1} END{exit !found}' \
+    || { echo "ERROR: libvmaf not compiled into this FFmpeg"; exit 1; }
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+
+COPY measure.py .
+COPY framework/ framework/
+
+ENTRYPOINT ["python3", "measure.py"]

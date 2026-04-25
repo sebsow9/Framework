@@ -5,8 +5,9 @@ import yaml
 
 from framework.sender.sender import Sender
 from framework.receiver.receiver import Receiver
+from framework.analyser.analyser import Analyser
 
-# TO DO - add actual comparison between input and output
+
 def setup_logging(level: str) -> None:
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
@@ -30,6 +31,8 @@ def main() -> None:
         Sender(config).run()
     elif role == "receiver":
         Receiver(config).run()
+    elif role == "analyser":
+        Analyser(config).run()
     else:
         print(f"Unknown role: {role!r}. Must be 'sender' or 'receiver'.", file=sys.stderr)
         sys.exit(1)

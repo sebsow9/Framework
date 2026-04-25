@@ -8,9 +8,12 @@ network:
 video:
   source: /media/input.mp4      # mounted into sender container
   output: /results/received.mp4 # written by receiver container
-  codec: libx264
+  codec: libx265
   bitrate: 2M
   fps: 30
+
+analyser:
+  vmaf_model: vmaf_4k_v0.6.1 # mounted into analyser container; see
 
 #audio:
 
