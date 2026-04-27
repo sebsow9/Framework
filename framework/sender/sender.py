@@ -10,31 +10,53 @@ logger = logging.getLogger(__name__)
 class Sender:
     def __init__(self, config: dict) -> None:
         self.network = config["network"]
-        self.video = config["video"]
+        self.video = config.get("video", None)
+        self.audio = config.get("audio", None)
         self.startup_delay = config.get("sender", {}).get("startup_delay", 3) 
         self.plugin = load_plugin(config)
 
     def run(self) -> None:
         host = self.network["receiver_host"]
         port = self.network["port"]
-        source = self.video["source"]
-        codec = self.video.get("codec", "libx264")
-        bitrate = self.video.get("bitrate", "2M")
-        fps = self.video.get("fps", 30)
 
-        # Base FFmpeg args that are the same regardless of transport mode
-        ffmpeg_base = [
-            "ffmpeg", "-hide_banner",
-            "-re",              # read at native frame rate (real-time simulation)
-            "-i", source,
-            "-c:v", codec,
-            "-b:v", bitrate,
-            "-r", str(fps),
-            "-c:a", "aac",     # MPEG-TS requires AAC audio
-            "-f", "mpegts",
-            "-vsync", "0",         # don't duplicate or drop frames to match timestamps, important to score the quality of the video stream as accurately as possible
-        ]
+        # Set base FFmpeg args that are the same regardless of transport mode
+        if self.video:
+            source = self.video["source"]
+            codec = self.video.get("codec", "libx264")
+            bitrate = self.video.get("bitrate", "2M")
+            fps = self.video.get("fps", 30)
 
+            ffmpeg_base = [
+                "ffmpeg", "-hide_banner",
+                "-re",              # read at native frame rate (real-time simulation)
+                "-i", source,
+                "-c:v", codec,
+                "-b:v", bitrate,
+                "-r", str(fps),
+                "-c:a", "aac",     # MPEG-TS requires AAC audio
+                "-f", "mpegts",
+                "-vsync", "0",         # don't duplicate or drop frames to match timestamps, important to score the quality of the video stream as accurately as possible
+            ]
+        elif self.audio:
+            source_audio = self.audio["source"]
+            sample_format_audio = self.audio.get("sample_format", "s16le")
+            codec_audio = self.audio.get("codec", "pcm_s16le")
+            sample_rate_audio = self.audio.get("sample_rate", "44100")
+            channels_audio = self.audio.get("channels", "2")
+
+            ffmpeg_base = [
+                "ffmpeg", "-hide_banner",
+                "-re",                      # realtime simulation
+                "-i", source_audio,
+                "-f", sample_format_audio,
+                "-c:a", codec_audio,
+                "-ar", sample_rate_audio,
+                "-ac", channels_audio,
+            ]
+        else:
+            logger.error("Neither 'video' nor 'audio' entry detected in config.yaml !")
+
+        # Handle plugin
         if self.plugin:
             # --- Plugin path ---
             self.plugin.sender_handshake(host, port)

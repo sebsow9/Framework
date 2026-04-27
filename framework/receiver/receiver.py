@@ -10,12 +10,17 @@ logger = logging.getLogger(__name__)
 class Receiver:
     def __init__(self, config: dict) -> None:
         self.network = config["network"]
-        self.video = config["video"]
+        self.video = config.get("video", None)
+        self.audio = config.get("audio", None)
         self.plugin = load_plugin(config)
 
     def run(self) -> None:
         port = self.network["port"]
-        output = self.video["output"]
+
+        if self.video:
+            output = self.video["output"]
+        elif self.audio:
+            output = self.audio["output"]
 
         os.makedirs(os.path.dirname(output), exist_ok=True)
 
@@ -55,7 +60,7 @@ class Receiver:
             "-y",
         ]
         if fragmented:
-            cmd += ["-movflags", "+frag_keyframe+empty_moov+default_base_moof"]
+            cmd += ["-movflags", "+frag_keyframe+empty_moov+default_base_moof"]  #TODO: look if audio needs different args
         cmd.append(output)
         return cmd
 
@@ -94,4 +99,7 @@ class Receiver:
         if ret != 0:
             logger.error("FFmpeg exited with code %d", ret)
         else:
-            logger.info("Received video saved to %s", output)
+            if self.video:
+                logger.info("Received video saved to %s", output)
+            elif self.audio:
+                logger.info("Received audio saved to %s", output)
