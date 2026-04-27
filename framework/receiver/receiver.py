@@ -43,7 +43,7 @@ class Receiver:
         else:
             # --- Default UDP path (no plugin) ---
             timeout_us = self.network.get("receiver_timeout_ms", 10000) * 1000
-            source = f"udp://0.0.0.0:{port}?fifo_size=50000000&timeout={timeout_us}&overrun_nonfatal=1"
+            source = f"udp://0.0.0.0:{port}?timeout={timeout_us}&overrun_nonfatal=1"
             # UDP has no clean EOF → use fragmented MP4 so file is valid if killed
             cmd = self._ffmpeg_output_cmd(source, output, fragmented=True)
             self._run_ffmpeg(cmd, source)

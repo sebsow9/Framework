@@ -5,20 +5,23 @@ network:
   port: 1234
   receiver_timeout_ms: 10000  # ms of silence before receiver closes — must exceed sender startup time
 
-video:
-  source: /media/input.mp4      # mounted into sender container
-  output: /results/received.mp4 # written by receiver container
-  codec: libx264
-  bitrate: 2M
-  fps: 30
+# ------------------------------------------------------------------------------------------------------------------------------------------
+# NOTE: If both audio and video blocks are present, the framework will prioritize video transmission and skip sending a separate audio file.
 
-# audio:    # if not testing for audio quality, comment out the entire "audio"  block
-#   source: /media/input.wav      # <- source and output arguments required, the rest is not
-#   output: /results/received.wav #
-#   sample_format: s16le          #  These arguments set parameters of FFMPEG's output stream.
-#   codec: pcm_s16le              #   If not specified, values representing CD quality
-#   sample_rate: "44100"          #   will be supplied by default at runtime.
-#   channels: "2"                 #  These values must be strings!
+# video:
+#   source: /media/input.mp4      # mounted into sender container
+#   output: /results/received.mp4 # written by receiver container
+#   codec: libx264
+#   bitrate: 2M
+#   fps: 30
+
+audio:                          # If not testing for audio quality, comment out the entire "audio"  block
+  source: /media/input.wav      # <- source and output arguments required, the rest is not.
+  output: /results/received.wav #
+  sample_format: s16le          #  These arguments set parameters of FFMPEG's output stream.
+  codec: pcm_s16le              #   If not specified, values representing CD quality
+  sample_rate: "44100"          #   will be supplied by default at runtime.
+  channels: "2"                 #  These number values must be strings!
 
 sender:
   startup_delay: 3  # seconds to wait before streaming, giving receiver time to bind
