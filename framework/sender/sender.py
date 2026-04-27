@@ -51,7 +51,7 @@ class Sender:
                 "-f", sample_format_audio,
                 "-c:a", codec_audio,
                 "-ar", sample_rate_audio,
-                "-ac", channels_audio,
+                "-ac", channels_audio
             ]
         else:
             logger.error("Neither 'video' nor 'audio' entry detected in config.yaml !")

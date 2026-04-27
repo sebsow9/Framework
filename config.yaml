@@ -12,13 +12,13 @@ video:
   bitrate: 2M
   fps: 30
 
-audio:    # if not testing for audio quality, comment out the entire "audio"  block
-  source: /media/input.wav      # <- source and output arguments required, the rest is not
-  output: /results.received.wav #
-  sample_format: s16le          #
-  codec: pcm_s16le              #  These arguments set parameters of FFMPEG's output stream.
-  sample_rate: 44100            #   If not specified, values representing CD quality
-  channels: 2                   #   will be supplied by default at runtime.
+# audio:    # if not testing for audio quality, comment out the entire "audio"  block
+#   source: /media/input.wav      # <- source and output arguments required, the rest is not
+#   output: /results/received.wav #
+#   sample_format: s16le          #  These arguments set parameters of FFMPEG's output stream.
+#   codec: pcm_s16le              #   If not specified, values representing CD quality
+#   sample_rate: "44100"          #   will be supplied by default at runtime.
+#   channels: "2"                 #  These values must be strings!
 
 sender:
   startup_delay: 3  # seconds to wait before streaming, giving receiver time to bind
@@ -27,7 +27,7 @@ logging:
   level: INFO
 
 # Plugin (optional) — comment out the entire block to use plain UDP
-plugin:
-  name: aes_ctr   # module name inside framework/plugins/ (without .py)
+# plugin:
+#   name: aes_ctr   # module name inside framework/plugins/ (without .py)
                    # built-in: aes_ctr
                    # custom:   drop your module in framework/plugins/ and set name

@@ -43,7 +43,7 @@ class Receiver:
         else:
             # --- Default UDP path (no plugin) ---
             timeout_us = self.network.get("receiver_timeout_ms", 10000) * 1000
-            source = f"udp://0.0.0.0:{port}?timeout={timeout_us}&overrun_nonfatal=1"
+            source = f"udp://0.0.0.0:{port}?fifo_size=50000000&timeout={timeout_us}&overrun_nonfatal=1"
             # UDP has no clean EOF → use fragmented MP4 so file is valid if killed
             cmd = self._ffmpeg_output_cmd(source, output, fragmented=True)
             self._run_ffmpeg(cmd, source)
@@ -53,14 +53,34 @@ class Receiver:
     def _ffmpeg_output_cmd(
         self, source: str, output: str, fragmented: bool
     ) -> list[str]:
-        cmd = [
-            "ffmpeg", "-hide_banner",
-            "-i", source,
-            "-c", "copy",
-            "-y",
-        ]
-        if fragmented:
-            cmd += ["-movflags", "+frag_keyframe+empty_moov+default_base_moof"]  #TODO: look if audio needs different args
+        if self.video:
+            cmd = [
+                "ffmpeg", "-hide_banner",
+                "-i", source,
+                "-c", "copy",
+                "-y",
+            ]
+            if fragmented:
+                cmd += ["-movflags", "+frag_keyframe+empty_moov+default_base_moof"]
+        elif self.audio:
+            sample_format_audio = self.audio.get("sample_format", "s16le")
+            codec_audio = self.audio.get("codec", "pcm_s16le")
+            sample_rate_audio = self.audio.get("sample_rate", "44100")
+            channels_audio = self.audio.get("channels", "2")
+            
+            cmd = [
+                "ffmpeg", "-hide_banner",
+                "-f", sample_format_audio,
+                "-c:a", codec_audio,
+                "-ar", sample_rate_audio,
+                "-ac", channels_audio,
+                "-i", source,
+                "-c", "copy",
+                "-y",
+            ]
+        
+            if fragmented:
+                cmd += ["-movflags", "+empty_moov+separate_moof", "-frag_duration", "5000000"]
         cmd.append(output)
         return cmd
 
