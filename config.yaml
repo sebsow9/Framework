@@ -25,7 +25,7 @@ logging:
   level: INFO
 
 # Plugin (optional) — comment out the entire block to use plain UDP
-plugin:
-  name: aes_ctr   # module name inside framework/plugins/ (without .py)
+#plugin:
+#  name: aes_ctr   # module name inside framework/plugins/ (without .py)
                    # built-in: aes_ctr
                    # custom:   drop your module in framework/plugins/ and set name
