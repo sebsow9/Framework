@@ -91,7 +91,11 @@ class Receiver:
         if result.returncode != 0:
             logger.error("FFmpeg exited with code %d", result.returncode)
         else:
-            logger.info("Received video saved.")
+            if self.video:
+                logger.info("Received video saved.")
+            elif self.audio:
+                logger.info("Received audio saved.")
+
 
     def _run_pipe(self, output: str, port: int) -> None:
         """

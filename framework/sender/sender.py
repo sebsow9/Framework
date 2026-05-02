@@ -32,10 +32,12 @@ class Sender:
                 "-i", source,
                 "-c:v", codec,
                 "-b:v", bitrate,
-                "-r", str(fps),
+                # "-r", str(fps),  # removed because of conflict with -vsync. Removal also helps with keeping transmissio characteristics
                 "-c:a", "aac",     # MPEG-TS requires AAC audio
                 "-f", "mpegts",
                 "-vsync", "0",         # don't duplicate or drop frames to match timestamps, important to score the quality of the video stream as accurately as possible
+                "-copyts",             # Copy timestamps
+                # "-avoid_negative_ts", "make_zero",  # <- see if this makes a differecne in measurements
             ]
         elif self.audio:
             source_audio = self.audio["source"]
