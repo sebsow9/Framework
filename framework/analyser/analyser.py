@@ -39,7 +39,7 @@ class Analyser:
             return results
         elif self.audio:
             results = self._run_audio_metrics()
-            self._log_audio_metrics(results)
+            self._log_audio_results(results)
             return results
     # ------------------------------------------------------------------
 
@@ -151,18 +151,26 @@ class Analyser:
         stderr = self._run(cmd)
 
         results: dict = {"psnr": None, "sdr": None}
+        psnr = []
+        sdr = []
         if stderr is None:
             logger.error("_run_audio_metrics(): FFMPEG did not return results")
-        # for line in stderr.splitlines():
-        #     print(line)
+        for line in stderr.splitlines():
+            if results["psnr"] is None and "PSNR" in line:
+                psnr.append(float(line.split(":")[1].strip().split()[0]))
+            if results["sdr"] is None and "SDR" in line:
+                sdr.append(float(line.split(":")[1].strip().split()[0]))
+        results["psnr"] = self.list_average(psnr)
+        results["sdr"] = self.list_average(sdr)
         return results
 
     def _log_audio_results(self, results: dict) -> None:
-        logger.info("=== Audio Quality Analysis Results ===")
+        logger.info("+--- Audio Quality Analysis Results ---")
         if results.get("psnr") is not None:
-            logger.info("PSNR:  %.2f dB  (higher is better; >50 dB is generally indistinguishable from source. Interpretation varries across codecs, compression, etc.)", results["psnr"])
+            logger.info("| PSNR (channel average):  %.2f dB  (higher is better; >50 dB is generally indistinguishable from source. Interpretation varries across codecs, compression, etc.)", results["psnr"])
         if results.get("sdr") is not None:
-            logger.info("SDR: %.2f dB (higher is better)", results["sdr"])
+            logger.info("| SDR (channel average): %.2f dB  (higher is better)", results["sdr"])
+        logger.info("+--------------------------------------")
 
     def _run(self, cmd: list[str]) -> str | None:
         logger.debug("FFmpeg command: %s", " ".join(cmd))
@@ -171,3 +179,8 @@ class Analyser:
             logger.error("FFmpeg exited with code %d\n%s", result.returncode, result.stderr)
             return None
         return result.stderr
+    
+    def list_average(self, list: list[float]) -> float:
+        x = 0.0
+        [x := x+item for item in list]
+        return x/len(list)
