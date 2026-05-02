@@ -7,32 +7,43 @@ logger = logging.getLogger(__name__)
 
 class Analyser:
     def __init__(self, config: dict) -> None:
-        self.reference = config["video"]["source"]
-        self.distorted = config["video"]["output"]
+        self.video = config.get("video", None)
+        self.audio = config.get("audio", None)
+        if self.video:
+            self.reference = config["video"]["source"]
+            self.distorted = config["video"]["output"]
 
-        analyser_cfg = config.get("analyser", {}) or {}
-        self.vmaf_enabled = analyser_cfg.get("vmaf", True)
-        # vmaf_v0.6.1   : default 1080p model (use for SD/HD content)
-        # vmaf_4k_v0.6.1: model trained for 4K viewing distance (use for UHD content)
-        self.vmaf_model = analyser_cfg.get("vmaf_model", "vmaf_v0.6.1")
-        # libvmaf is single-threaded by default; using all available cores
-        # cuts wall time on 4K content from minutes to seconds.
-        self.vmaf_threads = analyser_cfg.get("vmaf_threads", os.cpu_count() or 1)
+            analyser_cfg = config["video"].get("analyser", {}) or {}
+            self.vmaf_enabled = analyser_cfg.get("vmaf", True)
+            # vmaf_v0.6.1   : default 1080p model (use for SD/HD content)
+            # vmaf_4k_v0.6.1: model trained for 4K viewing distance (use for UHD content)
+            self.vmaf_model = analyser_cfg.get("vmaf_model", "vmaf_v0.6.1")
+            # libvmaf is single-threaded by default; using all available cores
+            # cuts wall time on 4K content from minutes to seconds.
+            self.vmaf_threads = analyser_cfg.get("vmaf_threads", os.cpu_count() or 1)
+
+        elif self.audio:
+            self.reference = config["audio"]["source"]
+            self.distorted = config["audio"]["output"]
 
     def run(self) -> dict:
         if not os.path.exists(self.distorted):
             logger.error("Distorted file not found: %s", self.distorted)
             return {}
 
-        # Single ffmpeg pass: decode each file once, fan out to all metrics
-        # in parallel via `split`. Saves two full decodes of the source pair.
-        results = self._run_metrics()
-        self._log_results(results)
-        return results
-
+        if self.video:
+            # Single ffmpeg pass: decode each file once, fan out to all metrics
+            # in parallel via `split`. Saves two full decodes of the source pair.
+            results = self._run_video_metrics()
+            self._log_video_results(results)
+            return results
+        elif self.audio:
+            results = self._run_audio_metrics()
+            self._log_audio_metrics(results)
+            return results
     # ------------------------------------------------------------------
 
-    def _run_metrics(self) -> dict:
+    def _run_video_metrics(self) -> dict:
         # input 0 = reference, input 1 = distorted.
         # libvmaf wants [distorted][reference]; psnr/ssim are symmetric.
         if self.vmaf_enabled:
@@ -109,16 +120,8 @@ class Analyser:
 
         return results
 
-    def _run(self, cmd: list[str]) -> str | None:
-        logger.debug("FFmpeg command: %s", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            logger.error("FFmpeg exited with code %d\n%s", result.returncode, result.stderr)
-            return None
-        return result.stderr
-
-    def _log_results(self, results: dict) -> None:
-        logger.info("=== Quality Analysis Results ===")
+    def _log_video_results(self, results: dict) -> None:
+        logger.info("=== Video Quality Analysis Results ===")
         if results.get("psnr") is not None:
             logger.info("PSNR:  %.2f dB  (higher is better; >40 dB = excellent)", results["psnr"])
         if results.get("ssim") is not None:
@@ -128,3 +131,43 @@ class Analyser:
                 logger.info("VMAF:  %.2f     (0-100; >90 = transparent)", results["vmaf"])
             else:
                 logger.error("VMAF:  FAILED — see ffmpeg error above")
+
+    def _run_audio_metrics(self) -> dict:
+        filter_complex = (
+            "[0:a]asplit=2[ref1][ref2];"
+            "[1:a]asplit=2[dist1][dist2];"
+            "[ref1][dist1]apsnr[apsnr];"
+            "[ref2][dist2]asdr[asdr]"
+        )
+        maps = ["-map", "[apsnr]", "-map", "[asdr]"]
+        cmd = [
+            "ffmpeg", "-hide_banner",
+            "-i", self.reference,
+            "-i", self.distorted,
+            "-filter_complex", filter_complex,
+            *maps,
+            "-f", "null", "-",
+        ]
+        stderr = self._run(cmd)
+
+        results: dict = {"psnr": None, "sdr": None}
+        if stderr is None:
+            logger.error("_run_audio_metrics(): FFMPEG did not return results")
+        # for line in stderr.splitlines():
+        #     print(line)
+        return results
+
+    def _log_audio_results(self, results: dict) -> None:
+        logger.info("=== Audio Quality Analysis Results ===")
+        if results.get("psnr") is not None:
+            logger.info("PSNR:  %.2f dB  (higher is better; >50 dB is generally indistinguishable from source. Interpretation varries across codecs, compression, etc.)", results["psnr"])
+        if results.get("sdr") is not None:
+            logger.info("SDR: %.2f dB (higher is better)", results["sdr"])
+
+    def _run(self, cmd: list[str]) -> str | None:
+        logger.debug("FFmpeg command: %s", " ".join(cmd))
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error("FFmpeg exited with code %d\n%s", result.returncode, result.stderr)
+            return None
+        return result.stderr

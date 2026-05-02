@@ -8,24 +8,23 @@ network:
 # ------------------------------------------------------------------------------------------------------------------------------------------
 # NOTE: If both audio and video blocks are present, the framework will prioritize video transmission and skip sending a separate audio file.
 
-video:
-  source: /media/input.mp4      # mounted into sender container
-  output: /results/received.mp4 # written by receiver container
-  codec: libx265
-  bitrate: 2M
-  fps: 30
+# video:
+#   source: /media/input.mp4      # mounted into sender container
+#   output: /results/received.mp4 # written by receiver container
+#   codec: libx265
+#   bitrate: 2M
+#   fps: 30
+#   analyser:
+#     vmaf_model: vmaf_4k_v0.6.1 # mounted into analyser container; see
 
-# audio:                          # If not testing for audio quality, comment out the entire "audio"  block
-#   source: /media/input.wav      # <- source and output arguments required, the rest is not.
-#   output: /results/received.wav #
-#   sample_format: s16le          #  These arguments set parameters of FFMPEG's output stream.
-#   codec: pcm_s16le              #   If not specified, values representing CD quality
-#   sample_rate: "44100"          #   will be supplied by default at runtime.
-#   channels: "2"                 #  These number values must be strings!
-analyser:
-  vmaf_model: vmaf_4k_v0.6.1 # mounted into analyser container; see
 
-#audio:
+audio:                          # If not testing for audio quality, comment out the entire "audio"  block
+  source: /media/input.wav      # <- Both source and output arguments required, the rest is not.
+  output: /results/received.wav #     While choosing your test files, make sure to select good quality references.
+  sample_format: s16le          #  These arguments set parameters of FFMPEG's output stream.
+  codec: pcm_s16le              #   If not specified, values representing CD quality will be supplied by default at runtime.
+  sample_rate: "44100"          #   For quality testing purposes, make sure these values accurately represent your input file!
+  channels: "2"                 #  These number values must be strings!
 
 
 sender:
