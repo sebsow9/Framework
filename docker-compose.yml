@@ -28,6 +28,23 @@ services:
     depends_on:
       - receiver   # ensures receiver container starts first
 
+  analyser:
+    build:
+      context: .
+      dockerfile: Dockerfile.analyser
+    container_name: analyser
+    environment:
+      - ROLE=analyser
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./framework/media:/media:ro
+      - ./results:/results:ro
+    depends_on:
+      sender:
+        condition: service_completed_successfully
+      receiver:
+        condition: service_completed_successfully
+
 networks:
   stream_net:
     driver: bridge

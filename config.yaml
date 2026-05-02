@@ -11,7 +11,7 @@ network:
 video:
   source: /media/input.mp4      # mounted into sender container
   output: /results/received.mp4 # written by receiver container
-  codec: libx264
+  codec: libx265
   bitrate: 2M
   fps: 30
 
@@ -22,6 +22,11 @@ video:
 #   codec: pcm_s16le              #   If not specified, values representing CD quality
 #   sample_rate: "44100"          #   will be supplied by default at runtime.
 #   channels: "2"                 #  These number values must be strings!
+analyser:
+  vmaf_model: vmaf_4k_v0.6.1 # mounted into analyser container; see
+
+#audio:
+
 
 sender:
   startup_delay: 3  # seconds to wait before streaming, giving receiver time to bind
