@@ -5,6 +5,9 @@ network:
   port: 1234
   receiver_timeout_ms: 10000  # ms of silence before receiver closes — must exceed sender startup time
 
+# ------------------------------------------------------------------------------------------------------------------------------------------
+# NOTE: If both audio and video blocks are present, the framework will prioritize video transmission and skip sending a separate audio file.
+
 video:
   source: /media/input.mp4      # mounted into sender container
   output: /results/received.mp4 # written by receiver container
@@ -12,6 +15,13 @@ video:
   bitrate: 2M
   fps: 30
 
+# audio:                          # If not testing for audio quality, comment out the entire "audio"  block
+#   source: /media/input.wav      # <- source and output arguments required, the rest is not.
+#   output: /results/received.wav #
+#   sample_format: s16le          #  These arguments set parameters of FFMPEG's output stream.
+#   codec: pcm_s16le              #   If not specified, values representing CD quality
+#   sample_rate: "44100"          #   will be supplied by default at runtime.
+#   channels: "2"                 #  These number values must be strings!
 analyser:
   vmaf_model: vmaf_4k_v0.6.1 # mounted into analyser container; see
 
@@ -25,7 +35,7 @@ logging:
   level: INFO
 
 # Plugin (optional) — comment out the entire block to use plain UDP
-#plugin:
-#  name: aes_ctr   # module name inside framework/plugins/ (without .py)
+# plugin:
+#   name: aes_ctr   # module name inside framework/plugins/ (without .py)
                    # built-in: aes_ctr
                    # custom:   drop your module in framework/plugins/ and set name
