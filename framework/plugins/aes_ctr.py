@@ -1,43 +1,61 @@
 """
-AES-256-CTR pipe-based transport with RSA-OAEP key encapsulation.
+AES-256-CTR pipe-based UDP transport with RSA-OAEP key encapsulation.
 
-Key exchange (RSA-OAEP)
-------------------------
+Key exchange (RSA-OAEP, over TCP control channel)
+-------------------------------------------------
 The AES session key is never sent in plaintext.
 
 1. Receiver generates a fresh RSA-2048 keypair.
 2. Receiver sends the *public* key to the sender (safe to share).
-3. Sender generates a random 32-byte AES key + 16-byte CTR nonce.
+3. Sender generates a random 32-byte AES key + 16-byte base nonce.
 4. Sender encrypts (key ‖ nonce) with the receiver's public key using
    RSA-OAEP / SHA-256 and sends the ciphertext.
 5. Receiver decrypts the ciphertext with its private key.
-6. Both sides now share the same AES key and nonce — neither was ever
-   visible on the wire.
+6. Both sides now share the same AES key and base nonce.
+
+Data path (UDP)
+---------------
+Encrypted media flows as length-implicit UDP datagrams:
+
+    [seq : 8B big-endian][AES-CTR ciphertext]
+
+Each datagram is encrypted independently with a per-packet IV derived from
+the session base nonce and the sequence number:
+
+    iv_i = base_nonce XOR (seq_i << 16)
+
+Shifting seq up by 16 bits reserves the low 16 bits of the 128-bit CTR
+state for the in-packet block counter. With 16-byte AES blocks that gives
+each packet up to 65 536 blocks (1 MiB) of keystream before its counter
+range would overlap the next packet's — far more than any UDP datagram
+can carry. The result: loss, reordering, or duplication of one datagram
+never desynchronises the rest of the stream, which is exactly what
+FFmpeg's MPEG-TS demuxer expects from native UDP transport.
+
+End of stream: the sender emits a FIN datagram (seq = 2**64 − 1, no
+payload) ``_FIN_REPEATS`` times to survive UDP loss. The receiver also
+arms a recv timeout so a lost FIN still terminates the loop.
 
   Receiver                          Sender
     |                                  |
-    | generate RSA-2048 keypair        |
     | listen on ctrl port (port + 1)   |
-    |                                  | sender_handshake()
-    |<------- TCP connect -----------  |
-    |--- len(4B) + public key (PEM) -->|
-    |<-- len(4B) + OAEP ciphertext ----|  wraps AES key + CTR nonce
-    |--- b"ACK" -------------------->  |
+    |<------- TCP connect ------------ |  sender_handshake()
+    |--- 4B len + public key (PEM) --->|
+    |<-- 4B len + OAEP ciphertext -----|  wraps AES key + base nonce
+    |--- "ACK" ---------------------->|
     |                                  |
-    | private_key.decrypt() → key,nonce| sender already has key, nonce
+    | bind UDP data socket (port)      | post_handshake_delay (1 s)
     |                                  |
-    | bind data socket (port)          | sleep post_handshake_delay (1 s)
-    | start FFmpeg  stdin=PIPE         | start FFmpeg  stdout=PIPE
-    |<====== encrypted MPEG-TS ========| sender_transport() → AES-CTR
-    | receiver_transport() → AES-CTR   |
-    | writes to FFmpeg stdin           |
+    |<====== encrypted MPEG-TS ========|  per-datagram AES-CTR
+    |  [seq][ciphertext]   (UDP)       |
+    |                                  |
+    |<-- FIN datagram (seq = 2^64-1) --|  repeated _FIN_REPEATS times
+    | break loop, close FFmpeg stdin   |
 
-Wire framing
-------------
-Every network message (public key, ciphertext, data frames) uses the
-same 4-byte big-endian length prefix so the receiver always knows exactly
-how many bytes to read.
-
+Note: AES-CTR alone provides confidentiality but not authentication. A
+network attacker who knows the protocol could inject malformed datagrams
+that decrypt to garbage; FFmpeg's demuxer will simply drop them. Add an
+HMAC or switch to AES-GCM if integrity is required.
 """
 from __future__ import annotations
 
@@ -55,10 +73,17 @@ from .base import TransportPlugin
 
 logger = logging.getLogger(__name__)
 
-_AES_KEY_SIZE = 32    # AES-256
-_CTR_NONCE_SIZE = 16  # AES block size, used as CTR nonce
-_CHUNK_SIZE = 65536   # 64 KB per data frame
-_CTRL_OFFSET = 1      # control channel lives at port + 1
+_AES_KEY_SIZE = 32              # AES-256
+_BASE_NONCE_SIZE = 16           # 128-bit session salt feeding per-packet IVs
+_PACKET_PAYLOAD_SIZE = 1316     # 7 MPEG-TS packets; fits typical 1500-byte MTU
+_PACKET_CTR_RESERVE_BITS = 16   # low bits of CTR reserved for in-packet block counter
+_SEQ_HEADER = ">Q"              # 8-byte big-endian sequence number prefix
+_SEQ_HEADER_SIZE = struct.calcsize(_SEQ_HEADER)
+_FIN_SEQ = (1 << 64) - 1        # reserved seq value signalling end of stream
+_FIN_REPEATS = 5                # send FIN this many times to mask UDP loss
+_DEFAULT_RECV_TIMEOUT_MS = 10000
+_CTRL_OFFSET = 1                # TCP control channel lives at port + 1
+_RECV_BUF = 65536               # max UDP datagram size
 
 _OAEP = padding.OAEP(
     mgf=padding.MGF1(algorithm=hashes.SHA256()),
@@ -67,9 +92,15 @@ _OAEP = padding.OAEP(
 )
 
 
+def _packet_iv(base_nonce: bytes, seq: int) -> bytes:
+    """Per-packet AES-CTR IV: base nonce XOR'd with (seq << reserve_bits)."""
+    base_int = int.from_bytes(base_nonce, "big")
+    return (base_int ^ (seq << _PACKET_CTR_RESERVE_BITS)).to_bytes(16, "big")
+
+
 class AESCTRPlugin(TransportPlugin):
     """
-    AES-256-CTR over TCP.  Session key established via RSA-2048 OAEP.
+    AES-256-CTR over UDP. Session key established via RSA-2048 OAEP on TCP.
     Transport mode: pipe-based (both sender_url / receiver_url return None).
     """
 
@@ -77,8 +108,9 @@ class AESCTRPlugin(TransportPlugin):
         super().__init__(config)
         self._key: bytes | None = None
         self._nonce: bytes | None = None
-        # Bound and listening after receiver_handshake; consumed in receiver_transport
-        self._data_server: socket.socket | None = None
+        # Bound in receiver_handshake; consumed in receiver_transport.
+        self._data_sock: socket.socket | None = None
+        self._recv_timeout_s = config.get("recv_timeout_ms", _DEFAULT_RECV_TIMEOUT_MS) / 1000.0
 
     # ------------------------------------------------------------------
     # Signal pipe mode to sender / receiver
@@ -91,17 +123,19 @@ class AESCTRPlugin(TransportPlugin):
         return None
 
     def post_handshake_delay(self) -> float:
-        # Let receiver start FFmpeg and bind the data socket before we connect
+        # Let receiver start FFmpeg before the first datagram arrives.
         return 1.0
 
     # ------------------------------------------------------------------
-    # Handshake — RSA-OAEP key encapsulation
+    # Handshake — RSA-OAEP key encapsulation over TCP
     # ------------------------------------------------------------------
 
     def receiver_handshake(self, port: int) -> None:
         """
         Generate RSA keypair → send public key → receive and decrypt the
-        AES session key that the sender wrapped with it.
+        AES session key that the sender wrapped with it. Then bind the
+        UDP data socket so datagrams arriving during FFmpeg startup are
+        kernel-buffered.
         """
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         pub_pem = private_key.public_key().public_bytes(
@@ -120,7 +154,7 @@ class AESCTRPlugin(TransportPlugin):
             with conn:
                 # Step 1 — send public key
                 _send_framed(conn, pub_pem)
-                # Step 2 — receive RSA_OAEP wrapped session key
+                # Step 2 — receive RSA-OAEP wrapped session material
                 ciphertext = _recv_framed(conn)
                 # Step 3 — acknowledge
                 conn.sendall(b"ACK")
@@ -130,16 +164,16 @@ class AESCTRPlugin(TransportPlugin):
         self._nonce = session_material[_AES_KEY_SIZE:]
         logger.info("Handshake complete with %s — AES session key unwrapped", addr[0])
 
-        # Bind data socket while FFmpeg starts up
-        self._data_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._data_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._data_server.bind(("0.0.0.0", port))
-        self._data_server.listen(1)
+        # Bind UDP data socket while sender is in post_handshake_delay so
+        # the kernel buffers any datagrams that arrive before FFmpeg starts.
+        self._data_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._data_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._data_sock.bind(("0.0.0.0", port))
 
     def sender_handshake(self, host: str, port: int) -> None:
         """
-        Receive the receiver's RSA public key → generate AES session key →
-        encrypt and send it back.
+        Receive the receiver's RSA public key → generate AES session key
+        and base nonce → encrypt and send them back.
         """
         ctrl_port = port + _CTRL_OFFSET
         logger.info("Handshake: connecting to %s:%d (with retry)", host, ctrl_port)
@@ -147,9 +181,9 @@ class AESCTRPlugin(TransportPlugin):
         with self._connect_with_retry(host, ctrl_port) as s:
             # Step 1 — receive public key
             pub_pem = _recv_framed(s)
-            # Step 2 — generate session key, wrap with public key, send
+            # Step 2 — generate session material, wrap with public key, send
             self._key = os.urandom(_AES_KEY_SIZE)
-            self._nonce = os.urandom(_CTR_NONCE_SIZE)
+            self._nonce = os.urandom(_BASE_NONCE_SIZE)
             pub_key = serialization.load_pem_public_key(pub_pem)
             ciphertext = pub_key.encrypt(self._key + self._nonce, _OAEP)
             _send_framed(s, ciphertext)
@@ -161,59 +195,86 @@ class AESCTRPlugin(TransportPlugin):
         logger.info("Handshake complete — AES session key sent")
 
     # ------------------------------------------------------------------
-    # Pipe-based transport
+    # Pipe-based UDP transport
     # ------------------------------------------------------------------
 
     def sender_transport(self, stream: IO[bytes], host: str, port: int) -> None:
         """
-        Read raw MPEG-TS from FFmpeg stdout, AES-CTR-encrypt in 64 KB chunks,
-        send each chunk as a length-prefixed frame over TCP.
+        Read raw MPEG-TS from FFmpeg stdout, AES-CTR-encrypt each
+        ``_PACKET_PAYLOAD_SIZE`` chunk under a per-packet IV, and emit
+        ``[seq][ciphertext]`` UDP datagrams. Finishes by sending a FIN
+        datagram a few times to survive packet loss.
         """
-        encryptor = Cipher(
-            algorithms.AES(self._key), modes.CTR(self._nonce)
-        ).encryptor()
-
-        logger.info("Connecting to receiver data port %s:%d", host, port)
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        logger.info("Sending UDP datagrams to %s:%d", host, port)
+        seq = 0
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            # connect() sets the default destination and lets the kernel
+            # surface ICMP "port unreachable" as an exception on send.
             sock.connect((host, port))
+
             while True:
-                chunk = stream.read(_CHUNK_SIZE)
+                chunk = stream.read(_PACKET_PAYLOAD_SIZE)
                 if not chunk:
                     break
-                _send_framed(sock, encryptor.update(chunk))
+                iv = _packet_iv(self._nonce, seq)
+                cipher = Cipher(algorithms.AES(self._key), modes.CTR(iv)).encryptor()
+                ct = cipher.update(chunk) + cipher.finalize()
+                sock.send(struct.pack(_SEQ_HEADER, seq) + ct)
+                seq += 1
 
-        encryptor.finalize()  # no-op for CTR, called for correctness
-        logger.info("Encrypted stream fully sent")
+            fin = struct.pack(_SEQ_HEADER, _FIN_SEQ)
+            for _ in range(_FIN_REPEATS):
+                sock.send(fin)
+
+        logger.info("Encrypted stream fully sent (%d datagrams + FIN)", seq)
 
     def receiver_transport(self, stream: IO[bytes], port: int) -> None:
         """
-        Accept sender's TCP connection, receive length-prefixed frames,
-        AES-CTR-decrypt, and write plaintext MPEG-TS to FFmpeg stdin.
+        Read UDP datagrams, decrypt each independently with the per-packet
+        IV, and write plaintext to FFmpeg stdin. Stops on FIN or after
+        ``recv_timeout_ms`` of silence.
         """
-        decryptor = Cipher(
-            algorithms.AES(self._key), modes.CTR(self._nonce)
-        ).decryptor()
+        sock = self._data_sock
+        self._data_sock = None
+        sock.settimeout(self._recv_timeout_s)
+        logger.info(
+            "Listening for UDP datagrams on port %d (timeout %.1fs)",
+            port, self._recv_timeout_s,
+        )
 
-        logger.info("Waiting for sender on data port %d", port)
-        conn, addr = self._data_server.accept()
-        self._data_server.close()
-        self._data_server = None
-
-        logger.info("Sender connected from %s — decrypting", addr[0])
-        with conn:
+        delivered = 0
+        try:
             while True:
-                frame = _recv_framed(conn)
-                if not frame:
+                try:
+                    datagram, addr = sock.recvfrom(_RECV_BUF)
+                except socket.timeout:
+                    logger.warning(
+                        "UDP recv timed out after %.1fs — stopping",
+                        self._recv_timeout_s,
+                    )
                     break
-                stream.write(decryptor.update(frame))
-                stream.flush()
 
-        decryptor.finalize()
-        logger.info("Decryption complete")
+                if len(datagram) < _SEQ_HEADER_SIZE:
+                    continue
+                seq = struct.unpack(_SEQ_HEADER, datagram[:_SEQ_HEADER_SIZE])[0]
+                if seq == _FIN_SEQ:
+                    logger.info("FIN received from %s — stopping", addr[0])
+                    break
+
+                ct = datagram[_SEQ_HEADER_SIZE:]
+                iv = _packet_iv(self._nonce, seq)
+                cipher = Cipher(algorithms.AES(self._key), modes.CTR(iv)).decryptor()
+                stream.write(cipher.update(ct) + cipher.finalize())
+                stream.flush()
+                delivered += 1
+        finally:
+            sock.close()
+
+        logger.info("Decryption complete — %d datagrams written", delivered)
 
 
 # ---------------------------------------------------------------------------
-# Framing helpers  —  4-byte big-endian length prefix + payload
+# Framing helpers — 4-byte big-endian length prefix + payload (handshake only)
 # ---------------------------------------------------------------------------
 
 def _send_framed(sock: socket.socket, data: bytes) -> None:
